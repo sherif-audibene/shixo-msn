@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>shixo-msn</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <!-- LOGIN VIEW -->
+  <section id="login" class="hidden">
+    <form id="loginForm" class="card">
+      <h1>shixo-msn</h1>
+      <p class="muted">Enter your bearer token to connect.</p>
+      <label>
+        Token
+        <input id="tokenInput" type="password" autocomplete="current-password" required />
+      </label>
+      <button type="submit" class="primary">Connect</button>
+      <p id="loginErr" class="error"></p>
+    </form>
+  </section>
+
+  <!-- MAIN VIEW -->
+  <section id="app" class="hidden">
+    <header>
+      <span id="statusDot" class="dot warn"></span>
+      <span id="statusText">connecting…</span>
+      <button id="refreshBtn" class="ghost" title="Reconnect">↻</button>
+      <span class="spacer"></span>
+      <span id="serverHost" class="muted"></span>
+      <button id="logoutBtn" class="ghost">Log out</button>
+    </header>
+
+    <section id="compose">
+      <div class="row">
+        <input id="titleInput" type="text" placeholder="Title (optional)" />
+        <input id="folderInput" list="folderSuggest" type="text" placeholder="Folder" />
+        <datalist id="folderSuggest"></datalist>
+      </div>
+      <textarea id="pasteInput" placeholder="Paste text here, then click Send Text — or drop a file anywhere."></textarea>
+      <div class="row">
+        <button id="sendTextBtn" class="primary">Send Text</button>
+        <label class="filebtn">
+          <input id="fileInput" type="file" hidden />
+          <span>Send File…</span>
+        </label>
+        <span class="spacer"></span>
+        <span id="progressLabel" class="muted"></span>
+      </div>
+      <progress id="progressBar" class="hidden" max="100" value="0"></progress>
+    </section>
+
+    <section id="historyHeader">
+      <h2>History</h2>
+      <input id="searchInput" type="search" placeholder="Search history…" />
+      <select id="folderFilter">
+        <option value="">All folders</option>
+      </select>
+    </section>
+
+    <ol id="history"></ol>
+  </section>
+
+  <!-- DETAIL MODAL -->
+  <div id="modal" class="modal hidden" aria-hidden="true">
+    <div class="modal-card">
+      <h2 id="modalTitle"></h2>
+      <div id="modalMeta" class="row hidden">
+        <input id="editTitle" type="text" placeholder="Title (optional)" />
+        <input id="editFolder" list="folderSuggest" type="text" placeholder="Folder" />
+      </div>
+      <div id="modalBody"></div>
+      <div class="modal-actions">
+        <button id="modalDelete" class="danger">Delete</button>
+        <span class="spacer"></span>
+        <button id="modalReveal" class="ghost hidden">Show</button>
+        <button id="modalEdit" class="ghost">Edit</button>
+        <button id="modalCancel" class="ghost hidden">Cancel</button>
+        <button id="modalClose" class="ghost">Close</button>
+        <button id="modalPrimary" class="primary">Copy</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- DROP OVERLAY -->
+  <div id="dropOverlay" class="hidden">Drop to upload</div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

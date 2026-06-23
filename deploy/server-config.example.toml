@@ -1,0 +1,15 @@
+# /etc/clip/config.toml
+# Where the server listens. Caddy will reverse-proxy to this address.
+listen = "127.0.0.1:6303"
+
+# Where SQLite + uploaded files live.
+data_dir = "/var/lib/clip"
+
+# Shared bearer token. Generate with: openssl rand -base64 48
+# Put the SAME value in each client's ~/.clip/config.toml
+token = "REPLACE-ME-WITH-A-LONG-RANDOM-STRING"
+
+# Leave tls_cert/tls_key empty — Caddy terminates TLS in front.
+# Set them only if you run clipsrv directly on a public port.
+tls_cert = ""
+tls_key  = ""

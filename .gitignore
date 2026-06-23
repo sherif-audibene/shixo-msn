@@ -1,0 +1,28 @@
+# build output
+/dist/
+/fyne-cross/
+# fyne-cross drops a placeholder Fyne logo here when Icon.png is missing;
+# replace this entry with the real icon once we have one.
+/Icon.png
+
+# local data (server-side)
+*.db
+*.db-wal
+*.db-shm
+/files/
+
+# logs
+*.log
+
+# editor
+.idea/
+.vscode/
+.DS_Store
+
+# local client config (contains secrets if accidentally placed here)
+.clip/
+config.toml
+
+# Go
+*.test
+*.out
