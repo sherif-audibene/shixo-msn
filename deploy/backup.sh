@@ -72,7 +72,7 @@ ssh $SSH_OPTS "$REMOTE_HOST" "mkdir -p '$REMOTE_PATH/current'"
 
 # Upload DB snapshot.
 rsync -a --partial -e "ssh $SSH_OPTS" \
-  "$STAGE/clip.db" "$REMOTE/current/clip.db"
+  "$STAGE/clip.db" "$REMOTE/current/clip.db.$(date +%F)"
 
 # Mirror the file store. --delete removes blobs on the remote that no
 # longer exist locally, so the remote always matches "what's here now".
