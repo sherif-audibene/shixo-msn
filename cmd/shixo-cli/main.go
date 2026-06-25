@@ -178,17 +178,20 @@ func runList(api *client.API, args []string) {
 				continue
 			}
 			if shown > 0 {
-				fmt.Println(strings.Repeat("-", 60))
+				fmt.Println()
 			}
+			var rows [][]string
 			for _, c := range cols {
-				v := longValue(it, c)
-				header := listColumns[c].header
-				if strings.Contains(v, "\n") {
-					fmt.Printf("%s:\n%s\n", header, v)
-				} else {
-					fmt.Printf("%-10s %s\n", header+":", v)
+				label := listColumns[c].header
+				for i, ln := range strings.Split(longValue(it, c), "\n") {
+					if i == 0 {
+						rows = append(rows, []string{label, ln})
+					} else {
+						rows = append(rows, []string{"", ln})
+					}
 				}
 			}
+			renderTable(os.Stdout, nil, rows)
 			shown++
 			if *limit > 0 && shown >= *limit {
 				break
@@ -226,6 +229,9 @@ func runList(api *client.API, args []string) {
 // ponytail: rune-width only, swap for go-runewidth if CJK/emoji matter.
 func renderTable(out io.Writer, headers []string, rows [][]string) {
 	cols := len(headers)
+	if cols == 0 && len(rows) > 0 {
+		cols = len(rows[0])
+	}
 	if cols == 0 {
 		return
 	}
@@ -235,6 +241,9 @@ func renderTable(out io.Writer, headers []string, rows [][]string) {
 	}
 	for _, r := range rows {
 		for i, c := range r {
+			if i >= cols {
+				continue
+			}
 			if n := utf8.RuneCountInString(c); n > widths[i] {
 				widths[i] = n
 			}
@@ -264,8 +273,10 @@ func renderTable(out io.Writer, headers []string, rows [][]string) {
 		b.WriteString("\n")
 	}
 	border("┌", "┬", "┐")
-	writeRow(headers)
-	border("├", "┼", "┤")
+	if len(headers) > 0 {
+		writeRow(headers)
+		border("├", "┼", "┤")
+	}
 	for _, r := range rows {
 		writeRow(r)
 	}
