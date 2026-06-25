@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -57,6 +59,8 @@ func main() {
 		runGet(api, args)
 	case "rm", "del", "delete":
 		runRm(api, args)
+	case "copy", "cp":
+		runCopy(api, args)
 	case "help", "-h", "--help":
 		usage()
 	default:
@@ -74,6 +78,7 @@ Usage:
   shixo-cli send -f PATH [-t TITLE] [-d FOLDER]     # file upload
   shixo-cli list [-n N] [-d FOLDER] [-f COLS] [-w WIDTH] [-l]   # -l = long format
   shixo-cli get ID [-o PATH]                        # text → stdout, file → ./name or PATH
+  shixo-cli copy ID                                 # copy a text item to the system clipboard
   shixo-cli rm ID                                   # delete an item
 
 Columns for -f: id, when, kind, source, folder, title, preview, text,
@@ -461,6 +466,74 @@ func runGet(api *client.API, args []string) {
 	}
 	fmt.Fprintln(os.Stderr)
 	fmt.Println(dest)
+}
+
+func runCopy(api *client.API, args []string) {
+	fs := flag.NewFlagSet("copy", flag.ExitOnError)
+	_ = fs.Parse(args)
+	if fs.NArg() < 1 {
+		fail(fmt.Errorf("usage: shixo-cli copy ID"))
+	}
+	id := fs.Arg(0)
+	ctx := context.Background()
+
+	items, err := api.List(ctx)
+	if err != nil {
+		fail(err)
+	}
+	var it *proto.Item
+	for i := range items {
+		if items[i].ID == id || strings.HasPrefix(items[i].ID, id) {
+			it = &items[i]
+			break
+		}
+	}
+	if it == nil {
+		fail(fmt.Errorf("no item with id %q", id))
+	}
+	if it.Kind != proto.KindText {
+		fail(fmt.Errorf("item %s is a file, not text (use `get` to download)", it.ID))
+	}
+	txt, err := api.GetText(ctx, it.ID)
+	if err != nil {
+		fail(err)
+	}
+	if err := writeClipboard(txt); err != nil {
+		fail(err)
+	}
+	fmt.Fprintln(os.Stderr, "copied to clipboard")
+}
+
+// writeClipboard pipes s into the OS clipboard helper. Falls back across the
+// common Linux options. Returns an error if none are available.
+func writeClipboard(s string) error {
+	var candidates [][]string
+	switch runtime.GOOS {
+	case "darwin":
+		candidates = [][]string{{"pbcopy"}}
+	case "windows":
+		candidates = [][]string{{"clip"}}
+	default:
+		candidates = [][]string{{"wl-copy"}, {"xclip", "-selection", "clipboard"}, {"xsel", "--clipboard", "--input"}}
+	}
+	var lastErr error
+	for _, argv := range candidates {
+		if _, err := exec.LookPath(argv[0]); err != nil {
+			lastErr = err
+			continue
+		}
+		cmd := exec.Command(argv[0], argv[1:]...)
+		cmd.Stdin = strings.NewReader(s)
+		if err := cmd.Run(); err != nil {
+			lastErr = fmt.Errorf("%s: %w", argv[0], err)
+			continue
+		}
+		return nil
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("no clipboard helper found")
+	}
+	return lastErr
 }
 
 func runRm(api *client.API, args []string) {
