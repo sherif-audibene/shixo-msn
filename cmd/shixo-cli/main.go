@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"flag"
 	"fmt"
 	"io"
@@ -504,8 +505,9 @@ func runCopy(api *client.API, args []string) {
 	fmt.Fprintln(os.Stderr, "copied to clipboard")
 }
 
-// writeClipboard pipes s into the OS clipboard helper. Falls back across the
-// common Linux options. Returns an error if none are available.
+// writeClipboard pipes s into the OS clipboard helper. Tries native helpers
+// first, then falls back to OSC 52 (works over SSH if the terminal supports
+// it: iTerm2, kitty, wezterm, tmux with `set -g set-clipboard on`, …).
 func writeClipboard(s string) error {
 	var candidates [][]string
 	switch runtime.GOOS {
@@ -530,10 +532,29 @@ func writeClipboard(s string) error {
 		}
 		return nil
 	}
+	if err := writeOSC52(s); err == nil {
+		return nil
+	} else if lastErr == nil {
+		lastErr = err
+	}
 	if lastErr == nil {
 		lastErr = fmt.Errorf("no clipboard helper found")
 	}
 	return lastErr
+}
+
+// writeOSC52 sends the OSC 52 clipboard escape to the controlling terminal.
+// Goes to /dev/tty so it works even when stdout is piped. Requires terminal
+// support; silent no-op otherwise (we can't tell from the sender side).
+func writeOSC52(s string) error {
+	tty, err := os.OpenFile("/dev/tty", os.O_WRONLY, 0)
+	if err != nil {
+		return err
+	}
+	defer tty.Close()
+	enc := base64.StdEncoding.EncodeToString([]byte(s))
+	_, err = fmt.Fprintf(tty, "\x1b]52;c;%s\x07", enc)
+	return err
 }
 
 func runRm(api *client.API, args []string) {
