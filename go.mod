@@ -8,6 +8,7 @@ require (
 	github.com/coder/websocket v1.8.12
 	github.com/gen2brain/beeep v0.0.0-20240516210008-9c006672e7f4
 	github.com/google/uuid v1.6.0
+	golang.org/x/term v0.29.0
 	modernc.org/sqlite v1.33.1
 )
 

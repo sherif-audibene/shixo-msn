@@ -14,9 +14,29 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"golang.org/x/term"
+
 	"github.com/sherifhamad/shixo-msn/internal/client"
 	"github.com/sherifhamad/shixo-msn/internal/proto"
 )
+
+// terminalWidth returns the current terminal width in columns, or 0 if stdout
+// isn't a tty (piped to a file, etc). Width 0 disables the auto-fit shrink.
+func terminalWidth() int {
+	w, _, err := term.GetSize(int(os.Stdout.Fd()))
+	if err != nil || w <= 0 {
+		return 0
+	}
+	return w
+}
+
+// effectiveTermWidth honors an explicit override; falls back to detection.
+func effectiveTermWidth(override int) int {
+	if override > 0 {
+		return override
+	}
+	return terminalWidth()
+}
 
 func main() {
 	if len(os.Args) < 2 {
@@ -153,7 +173,8 @@ func runList(api *client.API, args []string) {
 	folder := fs.String("d", "", "filter by folder")
 	fieldsCSV := fs.String("f", "id,when,kind,source,folder,preview",
 		"comma-separated columns: id,when,kind,source,folder,title,preview,text,filename,size,sha256,mime")
-	maxWidth := fs.Int("w", 60, "max width per cell in tabular mode (0 = no truncation)")
+	maxWidth := fs.Int("w", 60, "max width per cell (0 = no per-cell cap)")
+	termWidthOverride := fs.Int("W", 0, "override total terminal width for auto-fit (0 = detect)")
 	long := fs.Bool("l", false, "long format: one field per line, full text preserved (use with text-heavy columns)")
 	_ = fs.Parse(args)
 
@@ -184,7 +205,7 @@ func runList(api *client.API, args []string) {
 			for _, c := range cols {
 				rows = append(rows, []string{listColumns[c].header, longValue(it, c)})
 			}
-			renderTable(os.Stdout, nil, rows, *maxWidth)
+			renderTable(os.Stdout, nil, rows, *maxWidth, effectiveTermWidth(*termWidthOverride))
 			shown++
 			if *limit > 0 && shown >= *limit {
 				break
@@ -213,7 +234,7 @@ func runList(api *client.API, args []string) {
 			break
 		}
 	}
-	renderTable(os.Stdout, headers, rows, *maxWidth)
+	renderTable(os.Stdout, headers, rows, *maxWidth, effectiveTermWidth(*termWidthOverride))
 }
 
 // wrapCell splits a cell into lines: honors hard \n, then wraps each segment
@@ -239,13 +260,15 @@ func wrapCell(s string, width int) []string {
 	return out
 }
 
-// renderTable prints a Unicode box-drawing table. Cells wider than maxWidth
-// (or containing \n) wrap into multiple lines inside the cell. A horizontal
-// separator is drawn between items when any cell wraps.
+// renderTable prints a Unicode box-drawing table. Cells wider than the
+// column's allowance (or containing \n) wrap into multiple lines. If the
+// table would overflow termWidth, the widest column is shrunk repeatedly
+// until it fits (down to a minimum). A horizontal separator is drawn
+// between items when any cell wraps.
 // Widths are rune-counted, not display-width — CJK / emoji misalign by one
-// cell each. Latin/Arabic (the data this app actually carries) render fine.
+// cell each. Latin/Arabic render correctly.
 // ponytail: rune-width only, swap for go-runewidth if CJK/emoji matter.
-func renderTable(out io.Writer, headers []string, rows [][]string, maxWidth int) {
+func renderTable(out io.Writer, headers []string, rows [][]string, maxWidth, termWidth int) {
 	cols := len(headers)
 	if cols == 0 && len(rows) > 0 {
 		cols = len(rows[0])
@@ -254,34 +277,84 @@ func renderTable(out io.Writer, headers []string, rows [][]string, maxWidth int)
 		return
 	}
 
-	// Pre-wrap every cell so widths + heights account for the wrapped output.
-	wrapped := make([][][]string, len(rows))
-	multi := false
-	for ri, r := range rows {
-		wrapped[ri] = make([][]string, cols)
+	// Natural width per column = max rune count of any \n-split line, including
+	// headers. Cells aren't wrapped yet — that comes after we decide widths.
+	natural := make([]int, cols)
+	for i, h := range headers {
+		natural[i] = utf8.RuneCountInString(h)
+	}
+	for _, row := range rows {
 		for ci := 0; ci < cols; ci++ {
-			var cell string
-			if ci < len(r) {
-				cell = r[ci]
+			if ci >= len(row) {
+				continue
 			}
-			lines := wrapCell(cell, maxWidth)
-			if len(lines) > 1 {
-				multi = true
+			for _, line := range strings.Split(row[ci], "\n") {
+				if n := utf8.RuneCountInString(line); n > natural[ci] {
+					natural[ci] = n
+				}
 			}
-			wrapped[ri][ci] = lines
 		}
 	}
 
+	// Cap each column by the user's -w (when set).
 	widths := make([]int, cols)
-	for i, h := range headers {
-		widths[i] = utf8.RuneCountInString(h)
+	for i, n := range natural {
+		if maxWidth > 0 && n > maxWidth {
+			widths[i] = maxWidth
+		} else {
+			widths[i] = n
+		}
 	}
-	for _, row := range wrapped {
-		for ci, lines := range row {
-			for _, ln := range lines {
-				if n := utf8.RuneCountInString(ln); n > widths[ci] {
-					widths[ci] = n
+
+	// Auto-shrink to fit the terminal: borders add 3*cols+1 chars (one " │ "
+	// per column, plus the leading "│"). Keep a 4-char floor per column so
+	// content stays at least somewhat readable.
+	const minColWidth = 4
+	tableWidth := func() int {
+		t := 3*cols + 1
+		for _, w := range widths {
+			t += w
+		}
+		return t
+	}
+	if termWidth > 0 {
+		for tableWidth() > termWidth {
+			maxI := -1
+			for i, w := range widths {
+				if w <= minColWidth {
+					continue
 				}
+				if maxI < 0 || w > widths[maxI] {
+					maxI = i
+				}
+			}
+			if maxI < 0 {
+				break // every column is at the floor; can't shrink further
+			}
+			widths[maxI]--
+		}
+	}
+
+	// Now wrap every cell + header at the final per-column width.
+	wrapAll := func(row []string) [][]string {
+		out := make([][]string, cols)
+		for ci := 0; ci < cols; ci++ {
+			var cell string
+			if ci < len(row) {
+				cell = row[ci]
+			}
+			out[ci] = wrapCell(cell, widths[ci])
+		}
+		return out
+	}
+	headerLines := wrapAll(headers)
+	wrapped := make([][][]string, len(rows))
+	multi := false
+	for ri, r := range rows {
+		wrapped[ri] = wrapAll(r)
+		for _, lines := range wrapped[ri] {
+			if len(lines) > 1 {
+				multi = true
 			}
 		}
 	}
@@ -297,46 +370,40 @@ func renderTable(out io.Writer, headers []string, rows [][]string, maxWidth int)
 		}
 		b.WriteString(r + "\n")
 	}
-	writeRow := func(cells []string) {
-		b.WriteString("│")
-		for i, w := range widths {
-			var cell string
-			if i < len(cells) {
-				cell = cells[i]
+	writeLines := func(cellLines [][]string) {
+		height := 1
+		for _, lines := range cellLines {
+			if len(lines) > height {
+				height = len(lines)
 			}
-			pad := w - utf8.RuneCountInString(cell)
-			if pad < 0 {
-				pad = 0
-			}
-			b.WriteString(" " + cell + strings.Repeat(" ", pad) + " │")
 		}
-		b.WriteString("\n")
+		for h := 0; h < height; h++ {
+			b.WriteString("│")
+			for i, w := range widths {
+				cell := ""
+				if h < len(cellLines[i]) {
+					cell = cellLines[i][h]
+				}
+				pad := w - utf8.RuneCountInString(cell)
+				if pad < 0 {
+					pad = 0
+				}
+				b.WriteString(" " + cell + strings.Repeat(" ", pad) + " │")
+			}
+			b.WriteString("\n")
+		}
 	}
 
 	border("┌", "┬", "┐")
 	if len(headers) > 0 {
-		writeRow(headers)
+		writeLines(headerLines)
 		border("├", "┼", "┤")
 	}
 	for ri, row := range wrapped {
 		if multi && ri > 0 {
 			border("├", "┼", "┤")
 		}
-		height := 1
-		for _, lines := range row {
-			if len(lines) > height {
-				height = len(lines)
-			}
-		}
-		for h := 0; h < height; h++ {
-			phys := make([]string, cols)
-			for ci, lines := range row {
-				if h < len(lines) {
-					phys[ci] = lines[h]
-				}
-			}
-			writeRow(phys)
-		}
+		writeLines(row)
 	}
 	border("└", "┴", "┘")
 	fmt.Fprint(out, b.String())
