@@ -52,7 +52,7 @@ func usage() {
 Usage:
   shixo-cli send [-t TITLE] [-d FOLDER] [TEXT]      # text from arg or stdin
   shixo-cli send -f PATH [-t TITLE] [-d FOLDER]     # file upload
-  shixo-cli list [-n N] [-d FOLDER] [-f COLS]       # latest items (-f to pick columns)
+  shixo-cli list [-n N] [-d FOLDER] [-f COLS] [-w WIDTH]   # -w truncates each cell
   shixo-cli get ID [-o PATH]                        # text → stdout, file → ./name or PATH
   shixo-cli rm ID                                   # delete an item
 
@@ -150,6 +150,7 @@ func runList(api *client.API, args []string) {
 	folder := fs.String("d", "", "filter by folder")
 	fieldsCSV := fs.String("f", "id,when,kind,source,folder,preview",
 		"comma-separated columns: id,when,kind,source,folder,title,preview,text,filename,size,sha256,mime")
+	maxWidth := fs.Int("w", 60, "max width per cell (0 = no truncation)")
 	_ = fs.Parse(args)
 
 	cols := strings.Split(*fieldsCSV, ",")
@@ -179,7 +180,7 @@ func runList(api *client.API, args []string) {
 			continue
 		}
 		for i, c := range cols {
-			row[i] = listColumns[c].render(it)
+			row[i] = truncate(listColumns[c].render(it), *maxWidth)
 		}
 		fmt.Fprintln(w, strings.Join(row, "\t"))
 		shown++
@@ -269,11 +270,17 @@ func oneLine(s string) string {
 	return s
 }
 
+// truncate cuts a string to n runes. n <= 0 disables truncation. Rune-based
+// (not byte-based) so multi-byte chars like Arabic don't get sliced mid-codepoint.
 func truncate(s string, n int) string {
-	if len(s) <= n {
+	if n <= 0 {
 		return s
 	}
-	return s[:n] + "…"
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n]) + "…"
 }
 
 func humanSize(n int64) string {
