@@ -15,11 +15,19 @@ PIDFILE=/var/run/$NAME.pid
 LOG=/var/log/$NAME.log
 CMD="$DIR/clipsrv -config /etc/clip/config.toml"
 
+is_alive() {
+  # PID file alone lies — OS reuses PIDs. Validate the proc owns *our* binary.
+  [ -f "$PIDFILE" ] || return 1
+  pid=$(cat "$PIDFILE" 2>/dev/null) || return 1
+  [ -n "$pid" ] && [ -r "/proc/$pid/comm" ] && [ "$(cat /proc/$pid/comm)" = "clipsrv" ]
+}
+
 start() {
-  if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+  if is_alive; then
     echo "$NAME already running (pid $(cat "$PIDFILE"))"
     return 0
   fi
+  rm -f "$PIDFILE"
   echo "Starting $NAME"
   start-stop-daemon --start --quiet --background --make-pidfile \
     --pidfile "$PIDFILE" --chuid "$RUNUSER" --chdir "$DIR" \
@@ -37,7 +45,7 @@ case "$1" in
   stop)    stop ;;
   restart) stop; sleep 1; start ;;
   status)
-    if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+    if is_alive && curl -fsS --max-time 3 http://127.0.0.1:6303/api/health >/dev/null; then
       echo "$NAME running (pid $(cat "$PIDFILE"))"
     else
       echo "$NAME not running"
