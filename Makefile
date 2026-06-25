@@ -1,4 +1,4 @@
-.PHONY: tidy server gui-mac gui-windows gui-linux gui-cross-linux gui-cross-windows gui-cross-all all clean
+.PHONY: tidy server cli cli-all gui-mac gui-windows gui-linux gui-cross-linux gui-cross-windows gui-cross-all all clean
 
 BIN_DIR := dist
 APP_ID  ?= com.sherifhamad.shixo-msn
@@ -13,6 +13,19 @@ server: tidy
 		go build -ldflags="-s -w" -o $(BIN_DIR)/clipsrv-linux-amd64 ./cmd/clipsrv
 	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 \
 		go build -ldflags="-s -w" -o $(BIN_DIR)/clipsrv-linux-arm64 ./cmd/clipsrv
+
+# CLI client is pure Go — cross-compiles from any host.
+cli: tidy
+	mkdir -p $(BIN_DIR)
+	go build -ldflags="-s -w" -o $(BIN_DIR)/shixo-cli ./cmd/shixo-cli
+
+cli-all: tidy
+	mkdir -p $(BIN_DIR)
+	GOOS=darwin  GOARCH=arm64 CGO_ENABLED=0 go build -ldflags="-s -w" -o $(BIN_DIR)/shixo-cli-darwin-arm64  ./cmd/shixo-cli
+	GOOS=darwin  GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="-s -w" -o $(BIN_DIR)/shixo-cli-darwin-amd64  ./cmd/shixo-cli
+	GOOS=linux   GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="-s -w" -o $(BIN_DIR)/shixo-cli-linux-amd64   ./cmd/shixo-cli
+	GOOS=linux   GOARCH=arm64 CGO_ENABLED=0 go build -ldflags="-s -w" -o $(BIN_DIR)/shixo-cli-linux-arm64   ./cmd/shixo-cli
+	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="-s -w" -o $(BIN_DIR)/shixo-cli-windows-amd64.exe ./cmd/shixo-cli
 
 # GUI client uses Fyne (CGO). Build natively on the target OS.
 # On mac: builds for your current arch (apple silicon).
@@ -40,7 +53,7 @@ gui-cross-windows:
 
 gui-cross-all: gui-cross-linux gui-cross-windows
 
-all: server gui-mac
+all: server gui-mac cli
 
 clean:
 	rm -rf $(BIN_DIR) fyne-cross/

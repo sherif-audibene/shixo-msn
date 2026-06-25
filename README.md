@@ -95,6 +95,30 @@ It saves to `~/.clip/config.toml` and connects.
 - **History list** shows everything received from every machine. Click `Copy` on a text item to put it on your clipboard; click `Save` on a file item to download it to disk.
 - When a new item arrives from another machine, the window pops to the front and a system beep + notification fire.
 
+## CLI client
+
+Pure-Go terminal client; reuses the GUI's config at `~/.clip/config.toml`,
+or read `SHIXO_URL` / `SHIXO_TOKEN` from the environment.
+
+```bash
+make cli                          # builds dist/shixo-cli (no CGO; cross-compiles fine)
+
+shixo-cli send "hello world"      # text from arg
+echo "hi" | shixo-cli send        # text from stdin
+shixo-cli send -t Note -d code "func main() {}"
+shixo-cli send -f ./report.pdf -t "Q2 report" -d work
+
+shixo-cli list                    # latest 20
+shixo-cli list -n 50 -d code
+
+shixo-cli get <id>                # text → stdout, file → saved as ./<filename>
+shixo-cli get <id> -o out.txt
+shixo-cli rm <id>
+```
+
+IDs from `list` can be passed as prefixes to `get`. Cross-build everything
+with `make cli-all` (binaries land in `dist/`).
+
 ## Notes & limits
 
 - **No size limit**: server streams uploads straight to disk; downloads support range requests.
