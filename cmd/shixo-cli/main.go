@@ -11,8 +11,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"text/tabwriter"
 	"time"
+	"unicode/utf8"
 
 	"github.com/sherifhamad/shixo-msn/internal/client"
 	"github.com/sherifhamad/shixo-msn/internal/proto"
@@ -55,6 +55,9 @@ Usage:
   shixo-cli list [-n N] [-d FOLDER] [-f COLS] [-w WIDTH] [-l]   # -l = long format
   shixo-cli get ID [-o PATH]                        # text → stdout, file → ./name or PATH
   shixo-cli rm ID                                   # delete an item
+
+Columns for -f: id, when, kind, source, folder, title, preview, text,
+                filename, size, sha256, mime
 
 Config: reads ~/.clip/config.toml (shared with the GUI).
 Override with SHIXO_URL and SHIXO_TOKEN.
@@ -194,28 +197,80 @@ func runList(api *client.API, args []string) {
 		return
 	}
 
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	headers := make([]string, len(cols))
 	for i, c := range cols {
 		headers[i] = listColumns[c].header
 	}
-	fmt.Fprintln(w, strings.Join(headers, "\t"))
+	rows := make([][]string, 0, len(items))
 	shown := 0
-	row := make([]string, len(cols))
 	for _, it := range items {
 		if *folder != "" && !strings.EqualFold(it.Folder, *folder) {
 			continue
 		}
+		row := make([]string, len(cols))
 		for i, c := range cols {
 			row[i] = truncate(listColumns[c].render(it), *maxWidth)
 		}
-		fmt.Fprintln(w, strings.Join(row, "\t"))
+		rows = append(rows, row)
 		shown++
 		if *limit > 0 && shown >= *limit {
 			break
 		}
 	}
-	w.Flush()
+	renderTable(os.Stdout, headers, rows)
+}
+
+// renderTable prints a Unicode box-drawing table. Widths are rune-counted,
+// not display-width — so CJK / emoji misalign by one cell each. Latin/Arabic
+// (the data this app actually carries) render correctly.
+// ponytail: rune-width only, swap for go-runewidth if CJK/emoji matter.
+func renderTable(out io.Writer, headers []string, rows [][]string) {
+	cols := len(headers)
+	if cols == 0 {
+		return
+	}
+	widths := make([]int, cols)
+	for i, h := range headers {
+		widths[i] = utf8.RuneCountInString(h)
+	}
+	for _, r := range rows {
+		for i, c := range r {
+			if n := utf8.RuneCountInString(c); n > widths[i] {
+				widths[i] = n
+			}
+		}
+	}
+	var b strings.Builder
+	border := func(l, mid, r string) {
+		b.WriteString(l)
+		for i, w := range widths {
+			b.WriteString(strings.Repeat("─", w+2))
+			if i < cols-1 {
+				b.WriteString(mid)
+			}
+		}
+		b.WriteString(r + "\n")
+	}
+	writeRow := func(cells []string) {
+		b.WriteString("│")
+		for i, w := range widths {
+			cell := cells[i]
+			pad := w - utf8.RuneCountInString(cell)
+			if pad < 0 {
+				pad = 0
+			}
+			b.WriteString(" " + cell + strings.Repeat(" ", pad) + " │")
+		}
+		b.WriteString("\n")
+	}
+	border("┌", "┬", "┐")
+	writeRow(headers)
+	border("├", "┼", "┤")
+	for _, r := range rows {
+		writeRow(r)
+	}
+	border("└", "┴", "┘")
+	fmt.Fprint(out, b.String())
 }
 
 func runGet(api *client.API, args []string) {
