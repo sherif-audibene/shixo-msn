@@ -52,7 +52,7 @@ func usage() {
 Usage:
   shixo-cli send [-t TITLE] [-d FOLDER] [TEXT]      # text from arg or stdin
   shixo-cli send -f PATH [-t TITLE] [-d FOLDER]     # file upload
-  shixo-cli list [-n N] [-d FOLDER] [-f COLS] [-w WIDTH]   # -w truncates each cell
+  shixo-cli list [-n N] [-d FOLDER] [-f COLS] [-w WIDTH] [-l]   # -l = long format
   shixo-cli get ID [-o PATH]                        # text → stdout, file → ./name or PATH
   shixo-cli rm ID                                   # delete an item
 
@@ -150,7 +150,8 @@ func runList(api *client.API, args []string) {
 	folder := fs.String("d", "", "filter by folder")
 	fieldsCSV := fs.String("f", "id,when,kind,source,folder,preview",
 		"comma-separated columns: id,when,kind,source,folder,title,preview,text,filename,size,sha256,mime")
-	maxWidth := fs.Int("w", 60, "max width per cell (0 = no truncation)")
+	maxWidth := fs.Int("w", 60, "max width per cell in tabular mode (0 = no truncation)")
+	long := fs.Bool("l", false, "long format: one field per line, full text preserved (use with text-heavy columns)")
 	_ = fs.Parse(args)
 
 	cols := strings.Split(*fieldsCSV, ",")
@@ -166,6 +167,32 @@ func runList(api *client.API, args []string) {
 		fail(err)
 	}
 	sort.Slice(items, func(i, j int) bool { return items[i].CreatedAt.After(items[j].CreatedAt) })
+
+	if *long {
+		shown := 0
+		for _, it := range items {
+			if *folder != "" && !strings.EqualFold(it.Folder, *folder) {
+				continue
+			}
+			if shown > 0 {
+				fmt.Println(strings.Repeat("-", 60))
+			}
+			for _, c := range cols {
+				v := longValue(it, c)
+				header := listColumns[c].header
+				if strings.Contains(v, "\n") {
+					fmt.Printf("%s:\n%s\n", header, v)
+				} else {
+					fmt.Printf("%-10s %s\n", header+":", v)
+				}
+			}
+			shown++
+			if *limit > 0 && shown >= *limit {
+				break
+			}
+		}
+		return
+	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	headers := make([]string, len(cols))
@@ -251,6 +278,25 @@ func runRm(api *client.API, args []string) {
 	}
 	if err := api.Delete(context.Background(), args[0]); err != nil {
 		fail(err)
+	}
+}
+
+// longValue returns the raw field value for long-format output: keeps newlines
+// in `text` / `preview`, falls back to the tabular renderer for everything else.
+func longValue(it proto.Item, col string) string {
+	switch col {
+	case "text":
+		return it.Text
+	case "preview":
+		if it.Title != "" {
+			return it.Title
+		}
+		if it.Kind == proto.KindText {
+			return it.Text
+		}
+		return fmt.Sprintf("%s (%s)", it.Filename, humanSize(it.Size))
+	default:
+		return listColumns[col].render(it)
 	}
 }
 
