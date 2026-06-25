@@ -180,18 +180,11 @@ func runList(api *client.API, args []string) {
 			if shown > 0 {
 				fmt.Println()
 			}
-			var rows [][]string
+			rows := make([][]string, 0, len(cols))
 			for _, c := range cols {
-				label := listColumns[c].header
-				for i, ln := range strings.Split(longValue(it, c), "\n") {
-					if i == 0 {
-						rows = append(rows, []string{label, ln})
-					} else {
-						rows = append(rows, []string{"", ln})
-					}
-				}
+				rows = append(rows, []string{listColumns[c].header, longValue(it, c)})
 			}
-			renderTable(os.Stdout, nil, rows)
+			renderTable(os.Stdout, nil, rows, *maxWidth)
 			shown++
 			if *limit > 0 && shown >= *limit {
 				break
@@ -212,7 +205,7 @@ func runList(api *client.API, args []string) {
 		}
 		row := make([]string, len(cols))
 		for i, c := range cols {
-			row[i] = truncate(listColumns[c].render(it), *maxWidth)
+			row[i] = listColumns[c].render(it)
 		}
 		rows = append(rows, row)
 		shown++
@@ -220,14 +213,39 @@ func runList(api *client.API, args []string) {
 			break
 		}
 	}
-	renderTable(os.Stdout, headers, rows)
+	renderTable(os.Stdout, headers, rows, *maxWidth)
 }
 
-// renderTable prints a Unicode box-drawing table. Widths are rune-counted,
-// not display-width — so CJK / emoji misalign by one cell each. Latin/Arabic
-// (the data this app actually carries) render correctly.
+// wrapCell splits a cell into lines: honors hard \n, then wraps each segment
+// at width (rune-count). width <= 0 disables wrapping.
+func wrapCell(s string, width int) []string {
+	var out []string
+	for _, line := range strings.Split(s, "\n") {
+		if width <= 0 {
+			out = append(out, line)
+			continue
+		}
+		r := []rune(line)
+		if len(r) == 0 {
+			out = append(out, "")
+			continue
+		}
+		for len(r) > width {
+			out = append(out, string(r[:width]))
+			r = r[width:]
+		}
+		out = append(out, string(r))
+	}
+	return out
+}
+
+// renderTable prints a Unicode box-drawing table. Cells wider than maxWidth
+// (or containing \n) wrap into multiple lines inside the cell. A horizontal
+// separator is drawn between items when any cell wraps.
+// Widths are rune-counted, not display-width — CJK / emoji misalign by one
+// cell each. Latin/Arabic (the data this app actually carries) render fine.
 // ponytail: rune-width only, swap for go-runewidth if CJK/emoji matter.
-func renderTable(out io.Writer, headers []string, rows [][]string) {
+func renderTable(out io.Writer, headers []string, rows [][]string, maxWidth int) {
 	cols := len(headers)
 	if cols == 0 && len(rows) > 0 {
 		cols = len(rows[0])
@@ -235,20 +253,39 @@ func renderTable(out io.Writer, headers []string, rows [][]string) {
 	if cols == 0 {
 		return
 	}
+
+	// Pre-wrap every cell so widths + heights account for the wrapped output.
+	wrapped := make([][][]string, len(rows))
+	multi := false
+	for ri, r := range rows {
+		wrapped[ri] = make([][]string, cols)
+		for ci := 0; ci < cols; ci++ {
+			var cell string
+			if ci < len(r) {
+				cell = r[ci]
+			}
+			lines := wrapCell(cell, maxWidth)
+			if len(lines) > 1 {
+				multi = true
+			}
+			wrapped[ri][ci] = lines
+		}
+	}
+
 	widths := make([]int, cols)
 	for i, h := range headers {
 		widths[i] = utf8.RuneCountInString(h)
 	}
-	for _, r := range rows {
-		for i, c := range r {
-			if i >= cols {
-				continue
-			}
-			if n := utf8.RuneCountInString(c); n > widths[i] {
-				widths[i] = n
+	for _, row := range wrapped {
+		for ci, lines := range row {
+			for _, ln := range lines {
+				if n := utf8.RuneCountInString(ln); n > widths[ci] {
+					widths[ci] = n
+				}
 			}
 		}
 	}
+
 	var b strings.Builder
 	border := func(l, mid, r string) {
 		b.WriteString(l)
@@ -263,7 +300,10 @@ func renderTable(out io.Writer, headers []string, rows [][]string) {
 	writeRow := func(cells []string) {
 		b.WriteString("│")
 		for i, w := range widths {
-			cell := cells[i]
+			var cell string
+			if i < len(cells) {
+				cell = cells[i]
+			}
 			pad := w - utf8.RuneCountInString(cell)
 			if pad < 0 {
 				pad = 0
@@ -272,13 +312,31 @@ func renderTable(out io.Writer, headers []string, rows [][]string) {
 		}
 		b.WriteString("\n")
 	}
+
 	border("┌", "┬", "┐")
 	if len(headers) > 0 {
 		writeRow(headers)
 		border("├", "┼", "┤")
 	}
-	for _, r := range rows {
-		writeRow(r)
+	for ri, row := range wrapped {
+		if multi && ri > 0 {
+			border("├", "┼", "┤")
+		}
+		height := 1
+		for _, lines := range row {
+			if len(lines) > height {
+				height = len(lines)
+			}
+		}
+		for h := 0; h < height; h++ {
+			phys := make([]string, cols)
+			for ci, lines := range row {
+				if h < len(lines) {
+					phys[ci] = lines[h]
+				}
+			}
+			writeRow(phys)
+		}
 	}
 	border("└", "┴", "┘")
 	fmt.Fprint(out, b.String())
@@ -368,10 +426,10 @@ func longValue(it proto.Item, col string) string {
 
 func preview(it proto.Item) string {
 	if it.Title != "" {
-		return truncate(it.Title, 60)
+		return it.Title
 	}
 	if it.Kind == proto.KindText {
-		return truncate(oneLine(it.Text), 60)
+		return oneLine(it.Text)
 	}
 	return fmt.Sprintf("%s (%s)", it.Filename, humanSize(it.Size))
 }
