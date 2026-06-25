@@ -52,7 +52,7 @@ func usage() {
 Usage:
   shixo-cli send [-t TITLE] [-d FOLDER] [TEXT]      # text from arg or stdin
   shixo-cli send -f PATH [-t TITLE] [-d FOLDER]     # file upload
-  shixo-cli list [-n N] [-d FOLDER]                 # latest items
+  shixo-cli list [-n N] [-d FOLDER] [-f COLS]       # latest items (-f to pick columns)
   shixo-cli get ID [-o PATH]                        # text → stdout, file → ./name or PATH
   shixo-cli rm ID                                   # delete an item
 
@@ -124,11 +124,41 @@ func runSend(api *client.API, args []string) {
 	fmt.Println(it.ID)
 }
 
+// listColumns maps a column name to its header and a renderer. Order in the
+// output is whatever the user passes to -f; the keys here are the allowed set.
+var listColumns = map[string]struct {
+	header string
+	render func(proto.Item) string
+}{
+	"id":       {"ID", func(it proto.Item) string { return it.ID }},
+	"when":     {"WHEN", func(it proto.Item) string { return it.CreatedAt.Local().Format("2006-01-02 15:04") }},
+	"kind":     {"KIND", func(it proto.Item) string { return string(it.Kind) }},
+	"source":   {"SOURCE", func(it proto.Item) string { return it.Source }},
+	"folder":   {"FOLDER", func(it proto.Item) string { return dash(it.Folder) }},
+	"title":    {"TITLE", func(it proto.Item) string { return dash(it.Title) }},
+	"preview":  {"TITLE / PREVIEW", preview},
+	"text":     {"TEXT", func(it proto.Item) string { return oneLine(it.Text) }},
+	"filename": {"FILENAME", func(it proto.Item) string { return dash(it.Filename) }},
+	"size":     {"SIZE", func(it proto.Item) string { return humanSize(it.Size) }},
+	"sha256":   {"SHA256", func(it proto.Item) string { return it.SHA256 }},
+	"mime":     {"MIME", func(it proto.Item) string { return dash(it.MIME) }},
+}
+
 func runList(api *client.API, args []string) {
 	fs := flag.NewFlagSet("list", flag.ExitOnError)
 	limit := fs.Int("n", 20, "max items to show (0 = all)")
 	folder := fs.String("d", "", "filter by folder")
+	fieldsCSV := fs.String("f", "id,when,kind,source,folder,preview",
+		"comma-separated columns: id,when,kind,source,folder,title,preview,text,filename,size,sha256,mime")
 	_ = fs.Parse(args)
+
+	cols := strings.Split(*fieldsCSV, ",")
+	for i, c := range cols {
+		cols[i] = strings.ToLower(strings.TrimSpace(c))
+		if _, ok := listColumns[cols[i]]; !ok {
+			fail(fmt.Errorf("unknown field %q (allowed: id,when,kind,source,folder,title,preview,text,filename,size,sha256,mime)", cols[i]))
+		}
+	}
 
 	items, err := api.List(context.Background())
 	if err != nil {
@@ -137,20 +167,21 @@ func runList(api *client.API, args []string) {
 	sort.Slice(items, func(i, j int) bool { return items[i].CreatedAt.After(items[j].CreatedAt) })
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "ID\tWHEN\tKIND\tSOURCE\tFOLDER\tTITLE / PREVIEW")
+	headers := make([]string, len(cols))
+	for i, c := range cols {
+		headers[i] = listColumns[c].header
+	}
+	fmt.Fprintln(w, strings.Join(headers, "\t"))
 	shown := 0
+	row := make([]string, len(cols))
 	for _, it := range items {
 		if *folder != "" && !strings.EqualFold(it.Folder, *folder) {
 			continue
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
-			it.ID,
-			it.CreatedAt.Local().Format("2006-01-02 15:04"),
-			it.Kind,
-			it.Source,
-			dash(it.Folder),
-			preview(it),
-		)
+		for i, c := range cols {
+			row[i] = listColumns[c].render(it)
+		}
+		fmt.Fprintln(w, strings.Join(row, "\t"))
 		shown++
 		if *limit > 0 && shown >= *limit {
 			break

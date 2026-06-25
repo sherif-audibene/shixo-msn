@@ -110,6 +110,8 @@ shixo-cli send -f ./report.pdf -t "Q2 report" -d work
 
 shixo-cli list                    # latest 20
 shixo-cli list -n 50 -d code
+shixo-cli list -f id,when,title,size   # pick columns
+# columns: id, when, kind, source, folder, title, preview, text, filename, size, sha256, mime
 
 shixo-cli get <id>                # text → stdout, file → saved as ./<filename>
 shixo-cli get <id> -o out.txt
