@@ -66,9 +66,6 @@ type ui struct {
 
 	subMu     sync.Mutex
 	subCancel context.CancelFunc // cancels the current subscribe goroutine
-
-	rowsMu sync.Mutex
-	rows   map[fyne.CanvasObject]*historyRow
 }
 
 const passwordFolder = "passwords"
@@ -83,7 +80,15 @@ func isPasswordItem(it proto.Item) bool {
 // historyRow bundles every widget in one list row so updateRow doesn't have
 // to navigate the container tree (Fyne's NewBorder ordering shifted between
 // 2.5 and 2.7 — the panic at main.go:242 came from that).
+//
+// It is a widget rather than a bare container so the List's CreateItem result
+// can be type-asserted straight back to *historyRow. The previous
+// map[fyne.CanvasObject]*historyRow leaked: widget.List drains its whole item
+// pool on every full Refresh (fyne widget/list.go: "a full refresh may change
+// theme, we should drain the pool"), so each refresh built fresh rows that the
+// map then pinned forever.
 type historyRow struct {
+	widget.BaseWidget
 	box       *fyne.Container
 	icon      *widget.Icon
 	timeLbl   *widget.Label
@@ -93,6 +98,10 @@ type historyRow struct {
 	preview   *widget.Label
 	primary   *widget.Button
 	del       *widget.Button
+}
+
+func (r *historyRow) CreateRenderer() fyne.WidgetRenderer {
+	return widget.NewSimpleRenderer(r.box)
 }
 
 const folderAll = "All folders"
@@ -109,7 +118,7 @@ func main() {
 	// menu and on-arrival pop-up can bring it back without restarting.
 	w.SetCloseIntercept(func() { w.Hide() })
 
-	u := &ui{app: a, win: w, rows: map[fyne.CanvasObject]*historyRow{}}
+	u := &ui{app: a, win: w}
 	u.ctx, u.cancel = context.WithCancel(context.Background())
 
 	// System tray (mac menu bar / Windows tray / Linux indicator).
@@ -370,11 +379,8 @@ func (u *ui) newRow() fyne.CanvasObject {
 	// Center column: title on top (collapsed when empty), preview below.
 	center := container.NewVBox(r.titleLbl, r.preview)
 	r.box = container.NewBorder(nil, nil, left, right, center)
-
-	u.rowsMu.Lock()
-	u.rows[r.box] = r
-	u.rowsMu.Unlock()
-	return r.box
+	r.ExtendBaseWidget(r)
+	return r
 }
 
 func (u *ui) updateRow(i widget.ListItemID, o fyne.CanvasObject) {
@@ -386,10 +392,8 @@ func (u *ui) updateRow(i widget.ListItemID, o fyne.CanvasObject) {
 	it := u.filtered[i]
 	u.mu.Unlock()
 
-	u.rowsMu.Lock()
-	r := u.rows[o]
-	u.rowsMu.Unlock()
-	if r == nil {
+	r, ok := o.(*historyRow)
+	if !ok {
 		return
 	}
 
@@ -506,8 +510,13 @@ func itemMatches(it proto.Item, q string) bool {
 	if q == "" {
 		return true
 	}
-	hay := strings.ToLower(it.Title + "\n" + it.Folder + "\n" + it.Filename + "\n" + it.Source + "\n" + it.Text)
-	return strings.Contains(hay, q)
+	for _, f := range [...]string{it.Title, it.Folder, it.Filename, it.Source} {
+		if strings.Contains(strings.ToLower(f), q) {
+			return true
+		}
+	}
+	// Text last: it is the only big field, so a metadata hit skips lowering it.
+	return strings.Contains(strings.ToLower(it.Text), q)
 }
 
 // showDetail opens a modal with the full content + actions. Has two modes:
