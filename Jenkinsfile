@@ -74,6 +74,12 @@ pipeline {
           else
             sudo /usr/sbin/service "$APP" restart
           fi
+
+          # Exception to the rule above: the Monit check is installed on every deploy, like ytdl's.
+          if command -v monit >/dev/null; then
+            sudo cp deploy/monit.conf /etc/monit/conf.d/shixo-msn.conf
+            sudo monit -t && sudo monit reload
+          fi
         '''
       }
     }
